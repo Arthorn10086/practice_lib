@@ -7,7 +7,7 @@
                 stdlib
             ]},
         {env, []},
-        {modules, [astar, map, smtp_mail]},
+        {modules, [astar, smtp_mail, config_lib, file_monitor]},
 
         {licenses, ["Apache 2.0"]},
         {links, []}
