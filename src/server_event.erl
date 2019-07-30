@@ -24,6 +24,17 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+inform(Src, Mark, Args) ->
+    case config_lib:get(?MODULE, {Src, Mark}) of
+        {_, {M, F, A}, 0} ->%%同步事件
+            run(M, F, A, Src, Mark, Args),
+            ok;
+        {_, {M, F, A}, TimeOut} ->%%异步事件
+            gen_server:call(?MODULE, {inform, Src, Mark, Args, {M, F, A}, TimeOut});
+        _ ->
+            ok
+    end.
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -32,22 +43,12 @@ init([]) ->
     erlang:send_after(?INTERVAL, self(), 'handle_time_out'),
     {ok, #state{ets = server_event, run_list = []}}.
 
-handle_call({inform, Src, Mark, Args}, From, #state{ets = Ets, run_list = L} = State) ->
-    case config_lib:get(Ets, {Src, Mark}) of
-        {_, {M, F, A}, 0} ->%同步事件
-            spawn(fun() ->
-                Reply = run(M, F, A, Src, Mark, Args),
-                gen_server:reply(From, Reply) end),
-            {noreply, ok, State};
-        {_, {M, F, A}, TimeOut} ->%异步事件
-            MS = time_lib:now_millisecond(),
-            {Pid, Ref} = spawn_monitor(fun() -> run(M, F, A, Src, Mark, Args) end),
-            EndTime = MS + TimeOut,
-            NL = [{{Pid, Ref}, EndTime} | L],
-            {reply, ok, State#state{run_list = NL}};
-        _ ->
-            {reply, ok, State}
-    end;
+handle_call({inform, Src, Mark, Args, {M, F, A}, TimeOut}, _From, #state{run_list = L} = State) ->
+    MS = time_lib:now_millisecond(),
+    {Pid, Ref} = spawn_monitor(fun() -> run(M, F, A, Src, Mark, Args) end),
+    EndTime = MS + TimeOut,
+    NL = [{{Pid, Ref}, EndTime} | L],
+    {reply, ok, State#state{run_list = NL}};
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
@@ -57,10 +58,10 @@ handle_cast(_Request, State) ->
 
 
 handle_info('handle_time_out', #state{run_list = L} = State) ->
-    NL = if
-        length(L) =:= 0 ->
+    NL = case L of
+        [] ->
             [];
-        true ->
+        _ ->
             handle_run_list(L)
     end,
     erlang:send_after(?INTERVAL, self(), 'handle_time_out'),
@@ -88,16 +89,6 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-inform(Src, Mark, Args) ->
-    case config_lib:get(?MODULE, {Src, Mark}) of
-        {_, _, _TimeOut} ->
-            gen_server:call(?MODULE, {inform, Src, Mark, Args});
-        _ ->
-            ok
-    end.
-
-
-
 run(M, F, A, Src, Mark, Args) ->
     try
         M:F(A, Src, Mark, Args),
@@ -119,5 +110,5 @@ handle_run_list_([{_Key, TimeOut} | _T] = L, NowMS) when NowMS < TimeOut ->
     L;
 handle_run_list_([{Key, _TimeOut} | T], NowMS) ->
     {Pid, _Ref} = Key,
-    erlang:exit(Pid, kill),
+    erlang:exit(Pid, 'time_out'),
     handle_run_list_(T, NowMS).

@@ -209,24 +209,41 @@ handle_({Type, {Ref, MFAList, LogFun, TimeOut}}, Reply) when Type =:= 'tcp_proto
         [] ->
             Ets = ets:new(Type, ?DEFAULT_OPTIONS),
             ets:insert(?MODULE, {Type}),
-            ets:insert_new(Ets, {Ref, MFAList, LogFun, TimeOut});
+            ets:insert(Ets, {Ref, MFAList, LogFun, TimeOut});
         _ ->
-            ets:insert_new(Type, {Ref, MFAList, LogFun, TimeOut})
+            ets:insert(Type, {Ref, MFAList, LogFun, TimeOut})
     end,
     ProL = list_lib:get_value(Type, 1, Reply, []),
     NReply = lists:keystore(Type, 1, Reply, {Type, [Ref | ProL]}),
     NReply;
-handle_({Type, {Ref, MFA, TimeInfo}}, Reply) when Type =:= 'server_event' orelse Type =:= 'server_timer' ->
-    case ets:lookup(?MODULE, Type) of
+handle_({'server_event', {Ref, MFA, TimeInfo}}, Reply) ->
+    case ets:lookup(?MODULE, 'server_event') of
         [] ->
-            Ets = ets:new(Type, ?DEFAULT_OPTIONS),
-            ets:insert(?MODULE, {Type}),
-            ets:insert_new(Ets, {Ref, MFA, TimeInfo});
+            Ets = ets:new('server_event', ?DEFAULT_OPTIONS),
+            ets:insert(?MODULE, {'server_event'}),
+            ets:insert(Ets, {Ref, MFA, TimeInfo});
         _ ->
-            ets:insert_new(Type, {Ref, MFA, TimeInfo})
+            ets:insert('server_event', {Ref, MFA, TimeInfo})
     end,
-    ProL = list_lib:get_value(Type, 1, Reply, []),
-    NReply = lists:keystore(Type, 1, Reply, {Type, [Ref | ProL]}),
+    ProL = list_lib:get_value('server_event', 1, Reply, []),
+    NReply = lists:keystore('server_event', 1, Reply, {'server_event', [Ref | ProL]}),
+    NReply;
+handle_({'server_timer', {Ref, MFA, TimeInfo}}, Reply) ->
+    case ets:lookup(?MODULE, 'server_timer') of
+        [] ->
+            Ets = ets:new('server_timer', ?DEFAULT_OPTIONS),
+            ets:insert(?MODULE, {'server_timer'}),
+            ets:insert(Ets, {Ref, MFA, TimeInfo, 0, 0});
+        _ ->
+            case ets:lookup('server_timer', Ref) of
+                [] ->
+                    ets:insert('server_timer', {Ref, MFA, TimeInfo, 0, 0});
+                [{_, _, _, NextTime, Flag}] ->
+                    ets:insert('server_timer', {Ref, MFA, TimeInfo, NextTime, Flag})
+            end
+    end,
+    ProL = list_lib:get_value('server_timer', 1, Reply, []),
+    NReply = lists:keystore('server_timer', 1, Reply, {'server_timer', [Ref | ProL]}),
     NReply;
 handle_(_Data, Reply) ->
     Reply.
