@@ -3,12 +3,15 @@
         {vsn, "0.1.0"},
         {registered, []},
         {applications,
-            [kernel,
+            [
+                kernel,
                 stdlib
             ]},
         {env, []},
-        {modules, [astar, smtp_mail, config_lib, file_monitor]},
-
+        {modules,
+            [astar, smtp_mail, config_lib, file_monitor,
+                list_lib, time_lib, server_event, server_timer]
+        },
         {licenses, ["Apache 2.0"]},
         {links, []}
     ]}.
