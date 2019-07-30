@@ -4,7 +4,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, load_cfg/1]).
+-export([start_link/1]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -20,7 +20,8 @@
 -define(DEFAULT_OPTIONS, [named_table, protected, set]).
 -include_lib("kernel/include/file.hrl").
 -record(state, {
-    file_update_time
+    file_update_time,
+    cfg_path
 }).
 
 %%%===================================================================
@@ -33,8 +34,8 @@
 %%
 %% @end
 %%--------------------------------------------------------------------
-start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+start_link(Path) ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [Path], []).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -51,15 +52,15 @@ start_link() ->
 %%                     {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init([]) ->
+init([Path]) ->
     %%创建文件更新ets表
     Ets = ets:new(?ETS_REOLAD_TIME, [named_table, protected, set]),
     %%初始化所有配置
-    AllCFG = init_cfg(),
+    AllCFG = init_cfg(Path),
     after_update_cfg(Ets, AllCFG),
     %%启动定时器
     erlang:start_timer(?REOLAD_INTERVAL, self(), {refresh}),
-    {ok, #state{file_update_time = Ets}}.
+    {ok, #state{file_update_time = Ets, cfg_path = Path}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -127,9 +128,9 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 %%初始化所有配置
-init_cfg() ->
+init_cfg(Path) ->
     %%拿到所有配置文件
-    FileL = filelib:wildcard("./config/*" ++ ".cfg"),
+    FileL = filelib:wildcard(Path ++ "/*.cfg"),
     AllCFGFile = FileL,
     F = fun(File, R) ->
         {ok, DataL} = file:consult(File),
@@ -138,9 +139,9 @@ init_cfg() ->
     end,
     lists:foldl(F, [], AllCFGFile).
 %%配置文件更新
-do_refresh_config(#state{file_update_time = Ets}) ->
+do_refresh_config(#state{file_update_time = Ets,cfg_path = Path}) ->
 %%拿到所有配置文件
-    AllCFGFile = filelib:wildcard("./config/*" ++ ".cfg"),
+    AllCFGFile = filelib:wildcard(Path ++ "/*.cfg"),
     F = fun(File, R) ->
         case file:read_file_info(File) of
             {ok, #file_info{mtime = MT}} ->
