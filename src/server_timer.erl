@@ -4,7 +4,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0]).
+-export([start_link/0, set/3, delete/1]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -18,6 +18,7 @@
 -define(INTERVAL, 1000).%定时器执行间隔时间
 -define(RUNING, 1).%执行中
 -define(WAITING, 0).%未执行
+-define(TIMEOUT, 5000).
 -record(state, {ets, run_list, last_time}).
 
 %%%===================================================================
@@ -32,6 +33,10 @@
 %%--------------------------------------------------------------------
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+set(Ref, MFA, TimeInfo) ->
+    gen_server:call(?MODULE, {'set', Ref, MFA, TimeInfo}, ?TIMEOUT).
+delete(Ref) ->
+    gen_server:call(?MODULE, {'delete', Ref}, ?TIMEOUT).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -49,6 +54,7 @@ start_link() ->
 %% @end
 %%--------------------------------------------------------------------
 init([]) ->
+    ets:new(?MODULE, [named_table, protected, set]),
     {ok, #state{ets = ?MODULE, run_list = [], last_time = time_lib:now_second()}, ?INTERVAL}.
 
 %%--------------------------------------------------------------------
@@ -58,6 +64,17 @@ init([]) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
+handle_call({'set', Ref, MFA, TimeInfo}, _From, #state{ets = Ets} = State) ->
+    case ets:lookup(Ets, Ref) of
+        [] ->
+            ets:insert(Ets, {Ref, MFA, TimeInfo});
+        [{_, _, _, NextTime, Flag}] ->
+            ets:insert(Ets, {Ref, MFA, TimeInfo, NextTime, Flag})
+    end,
+    {reply, ok, State};
+handle_call({'delete', Ref}, _From, #state{ets = Ets} = State) ->
+    ets:delete(Ets, Ref),
+    {reply, ok, State};
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 

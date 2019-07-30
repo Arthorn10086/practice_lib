@@ -81,10 +81,6 @@ start_link() ->
 %%%===================================================================
 init([]) ->
     Ets = ets:new(?MODULE, [named_table, protected, set]),
-    %%初始化所有配置表进内存
-    AllCfg = init_cfg(),
-    %%通知文件管理进程更新文件刷新表
-    true = gen_server:call('file_monitor', {'init_cfg', AllCfg}),
     {ok, Ets, hibernate}.
 
 %%--------------------------------------------------------------------
@@ -126,21 +122,6 @@ handle_call({'create', TableName, KVL, Options}, _From, State) ->
     lists:foreach(F, KVL),
     ets:insert(State, {TableName}),
     {reply, ok, State, hibernate};
-%%解析加载配置文件
-handle_call({'load_cfg', Files}, _From, State) ->
-    F = fun(R, File) ->
-        try
-            {ok, DataL} = file:consult(File),
-            Reply = lists:foldl(fun handle_/2, [], DataL),
-            [{File, Reply} | R]
-        catch
-            E1:E2 ->
-                error_logger:error_msg("Error load_file : ~p~p~n~p~n", [E1, E2, erlang:get_stacktrace()]),
-                {break, ignore}
-        end
-    end,
-    Reply = list_lib:foreach(F, [], Files),
-    {reply, Reply, State, hibernate};
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
@@ -175,75 +156,3 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-init_cfg() ->
-    %%拿到所有配置文件
-    FileL = filelib:wildcard("./config/*" ++ ".cfg"),
-    AllCFGFile = FileL,
-    F = fun(File, R) ->
-        {ok, DataL} = file:consult(File),
-        Reply = lists:foldl(fun handle_/2, [], DataL),
-        [{File, Reply} | R]
-    end,
-    lists:foldl(F, [], AllCFGFile).
-
-
-%%配置表
-handle_({'config', {TableName, KVList, Options}}, Reply) ->
-    case ets:lookup(?MODULE, TableName) of
-        [] ->
-            Ets = ets:new(TableName, Options ++ ?DEFAULT_OPTIONS),
-            ets:insert(?MODULE, {TableName}),
-            [ets:insert(Ets, KV) || KV <- KVList];
-        _ ->
-            [ets:insert(TableName, KV) || KV <- KVList]
-    end,
-    KeyPos = ets:info(TableName, 'keypos'),
-    CFGL = list_lib:get_value('config', 1, Reply, []),
-    NCFGL = [{TableName, [element(KeyPos, Item) || Item <- KVList]} | CFGL],
-    NCFGL1 = [{T, Keys} || {T, Keys} <- list_lib:merge_kv(NCFGL, []), Keys =/= []],
-    NReply = lists:keystore('config', 1, Reply, {'config', NCFGL1}),
-    NReply;
-%%通讯协议
-handle_({Type, {Ref, MFAList, LogFun, TimeOut}}, Reply) when Type =:= 'tcp_protocol' orelse Type =:= 'http_protocol' ->
-    case ets:lookup(?MODULE, Type) of
-        [] ->
-            Ets = ets:new(Type, ?DEFAULT_OPTIONS),
-            ets:insert(?MODULE, {Type}),
-            ets:insert(Ets, {Ref, MFAList, LogFun, TimeOut});
-        _ ->
-            ets:insert(Type, {Ref, MFAList, LogFun, TimeOut})
-    end,
-    ProL = list_lib:get_value(Type, 1, Reply, []),
-    NReply = lists:keystore(Type, 1, Reply, {Type, [Ref | ProL]}),
-    NReply;
-handle_({'server_event', {Ref, MFA, TimeInfo}}, Reply) ->
-    case ets:lookup(?MODULE, 'server_event') of
-        [] ->
-            Ets = ets:new('server_event', ?DEFAULT_OPTIONS),
-            ets:insert(?MODULE, {'server_event'}),
-            ets:insert(Ets, {Ref, MFA, TimeInfo});
-        _ ->
-            ets:insert('server_event', {Ref, MFA, TimeInfo})
-    end,
-    ProL = list_lib:get_value('server_event', 1, Reply, []),
-    NReply = lists:keystore('server_event', 1, Reply, {'server_event', [Ref | ProL]}),
-    NReply;
-handle_({'server_timer', {Ref, MFA, TimeInfo}}, Reply) ->
-    case ets:lookup(?MODULE, 'server_timer') of
-        [] ->
-            Ets = ets:new('server_timer', ?DEFAULT_OPTIONS),
-            ets:insert(?MODULE, {'server_timer'}),
-            ets:insert(Ets, {Ref, MFA, TimeInfo, 0, 0});
-        _ ->
-            case ets:lookup('server_timer', Ref) of
-                [] ->
-                    ets:insert('server_timer', {Ref, MFA, TimeInfo, 0, 0});
-                [{_, _, _, NextTime, Flag}] ->
-                    ets:insert('server_timer', {Ref, MFA, TimeInfo, NextTime, Flag})
-            end
-    end,
-    ProL = list_lib:get_value('server_timer', 1, Reply, []),
-    NReply = lists:keystore('server_timer', 1, Reply, {'server_timer', [Ref | ProL]}),
-    NReply;
-handle_(_Data, Reply) ->
-    Reply.

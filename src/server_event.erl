@@ -4,7 +4,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, inform/3]).
+-export([start_link/0, inform/3, set/3, delete/1]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -16,6 +16,7 @@
 
 -define(SERVER, ?MODULE).
 -define(INTERVAL, 1000).%超时检查间隔时间
+-define(TIMEOUT, 5000).
 -record(state, {ets, run_list}).
 
 %%%===================================================================
@@ -34,14 +35,18 @@ inform(Src, Mark, Args) ->
         _ ->
             ok
     end.
-
+set(Ref, MFA, TimeInfo) ->
+    gen_server:call(?MODULE, {'set', Ref, MFA, TimeInfo}, ?TIMEOUT).
+delete(Ref) ->
+    gen_server:call(?MODULE, {'delete', Ref}, ?TIMEOUT).
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
 init([]) ->
+    Ets = ets:new(?MODULE, [named_table, protected, set]),
     erlang:send_after(?INTERVAL, self(), 'handle_time_out'),
-    {ok, #state{ets = server_event, run_list = []}}.
+    {ok, #state{ets = Ets, run_list = []}}.
 
 handle_call({inform, Src, Mark, Args, {M, F, A}, TimeOut}, _From, #state{run_list = L} = State) ->
     MS = time_lib:now_millisecond(),
@@ -49,6 +54,12 @@ handle_call({inform, Src, Mark, Args, {M, F, A}, TimeOut}, _From, #state{run_lis
     EndTime = MS + TimeOut,
     NL = [{{Pid, Ref}, EndTime} | L],
     {reply, ok, State#state{run_list = NL}};
+handle_call({'set', Ref, MFA, TimeInfo}, _From, #state{ets = Ets} = State) ->
+    ets:insert(Ets, {Ref, MFA, TimeInfo}),
+    {reply, ok, State};
+handle_call({'delete', Ref}, _From, #state{ets = Ets} = State) ->
+    ets:delete(Ets, Ref),
+    {reply, ok, State};
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
@@ -72,7 +83,7 @@ handle_info({'DOWN', Ref, process, Pid, Reason}, #state{run_list = L} = State) -
         'normal' ->
             ok;
         _ ->
-            error_logger:error_msg("Error reading ~s's file info: ~p~n", [Reason])
+            log4erl:log(info, "~p~n", [{Pid, Ref, Reason}])
     end,
     {noreply, State#state{run_list = L1}};
 handle_info(_Info, State) ->

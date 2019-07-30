@@ -4,7 +4,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0]).
+-export([start_link/0, load_cfg/1]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -17,7 +17,7 @@
 -define(SERVER, ?MODULE).
 -define(ETS_REOLAD_TIME, 'file_monitor').
 -define(REOLAD_INTERVAL, 20000).
--define(PROJECT, zero).
+-define(DEFAULT_OPTIONS, [named_table, protected, set]).
 -include_lib("kernel/include/file.hrl").
 -record(state, {
     file_update_time
@@ -54,6 +54,9 @@ start_link() ->
 init([]) ->
     %%创建文件更新ets表
     Ets = ets:new(?ETS_REOLAD_TIME, [named_table, protected, set]),
+    %%初始化所有配置
+    AllCFG = init_cfg(),
+    after_update_cfg(Ets, AllCFG),
     %%启动定时器
     erlang:start_timer(?REOLAD_INTERVAL, self(), {refresh}),
     {ok, #state{file_update_time = Ets}}.
@@ -65,10 +68,6 @@ init([]) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-handle_call({'init_cfg', AllCFG}, _From, #state{file_update_time = Ets} = State) ->
-    %%config会在init的时候初始化所有配置，记录加载的所有配置文件的修改时间和文件包含的配置的Key
-    after_update_cfg(Ets, AllCFG),
-    {reply, true, State};
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
@@ -127,6 +126,17 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+%%初始化所有配置
+init_cfg() ->
+    %%拿到所有配置文件
+    FileL = filelib:wildcard("./config/*" ++ ".cfg"),
+    AllCFGFile = FileL,
+    F = fun(File, R) ->
+        {ok, DataL} = file:consult(File),
+        Reply = lists:foldl(fun handle_/2, [], DataL),
+        [{File, Reply} | R]
+    end,
+    lists:foldl(F, [], AllCFGFile).
 %%配置文件更新
 do_refresh_config(#state{file_update_time = Ets}) ->
 %%拿到所有配置文件
@@ -154,8 +164,8 @@ do_refresh_config(#state{file_update_time = Ets}) ->
         end
     end,
     LoadFiles = lists:foldl(F, [], AllCFGFile),
-    %%通知config,返回配置文件中所有的配置项的key
-    case gen_server:call('config_lib', {'load_cfg', LoadFiles}) of
+    %%解析配置文件
+    case load_cfg(LoadFiles) of
         ignore ->
             ok;
         AllReply ->
@@ -168,6 +178,55 @@ do_refresh_config(#state{file_update_time = Ets}) ->
             end
     end.
 
+load_cfg(Files) ->
+    F = fun(R, File) ->
+        try
+            {ok, DataL} = file:consult(File),
+            Reply = lists:foldl(fun handle_/2, [], DataL),
+            [{File, Reply} | R]
+        catch
+            E1:E2 ->
+                error_logger:error_msg("Error load_file : ~p~p~n~p~n", [E1, E2, erlang:get_stacktrace()]),
+                {break, ignore}
+        end
+    end,
+    list_lib:foreach(F, [], Files).
+
+%%配置表
+handle_({'config', {TableName, KVList, Options}}, Reply) ->
+    case ets:lookup(?MODULE, {TableName}) of
+        [] ->
+            config_lib:set(TableName, KVList, Options ++ ?DEFAULT_OPTIONS),
+            ets:insert(?MODULE, {TableName});
+        _ ->
+            [config_lib:set(TableName, KV) || KV <- KVList]
+    end,
+    KeyPos = ets:info(TableName, 'keypos'),
+    CFGL = list_lib:get_value('config', 1, Reply, []),
+    NCFGL = [{TableName, [element(KeyPos, Item) || Item <- KVList]} | CFGL],
+    NCFGL1 = [{T, Keys} || {T, Keys} <- list_lib:merge_kv(NCFGL, []), Keys =/= []],
+    NReply = lists:keystore('config', 1, Reply, {'config', NCFGL1}),
+    NReply;
+%%通讯协议
+handle_({Type, {Ref, MFAList, LogFun, TimeOut}}, Reply) when Type =:= 'tcp_protocol' orelse Type =:= 'http_protocol' ->
+    Type:set(Ref, MFAList, LogFun, TimeOut),
+    ProL = list_lib:get_value(Type, 1, Reply, []),
+    NReply = lists:keystore(Type, 1, Reply, {Type, [Ref | ProL]}),
+    NReply;
+%%事件
+handle_({'server_event', {Ref, MFA, TimeInfo}}, Reply) ->
+    server_event:set(Ref, MFA, TimeInfo),
+    ProL = list_lib:get_value('server_event', 1, Reply, []),
+    NReply = lists:keystore('server_event', 1, Reply, {'server_event', [Ref | ProL]}),
+    NReply;
+%%定时任务
+handle_({'server_timer', {Ref, MFA, TimeInfo}}, Reply) ->
+    server_timer:set(Ref, MFA, TimeInfo),
+    ProL = list_lib:get_value('server_timer', 1, Reply, []),
+    NReply = lists:keystore('server_timer', 1, Reply, {'server_timer', [Ref | ProL]}),
+    NReply;
+handle_(_Data, Reply) ->
+    Reply.
 
 %%修改配置文件的信息之后处理
 after_update_cfg(Ets, AllCFG) ->
@@ -224,7 +283,7 @@ update_delete(NewCfgList, OldCfgList) ->
                 true ->
                     ok;
                 false ->
-                    config_lib:delete(Type, Pro)
+                    Type:delete(Pro)
             end
         end,
         lists:foreach(ProF, list_lib:get_value(Type, 1, OldCfgList, []))
@@ -238,7 +297,7 @@ update_delete(NewCfgList, OldCfgList) ->
                 true ->
                     ok;
                 false ->
-                    config_lib:delete(Type, CFG)
+                    Type:delete(CFG)
             end
         end,
         lists:foreach(ProF, list_lib:get_value(Type, 1, OldCfgList, []))
