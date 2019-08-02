@@ -31,11 +31,11 @@ set(TableName, KVList, Options) ->
             gen_server:call(?SERVER, {'batch_update', TableName, KVList}, ?TIMEOUT)
     end.
 
-set(TableName, {K, V}) ->
+set(TableName, Info) ->
     case ets:info(TableName) of
-        undefined -> gen_server:call(?SERVER, {'create', TableName, [{K, V}], ?DEFAULT_OPTIONS}, ?TIMEOUT);
+        undefined -> gen_server:call(?SERVER, {'create', TableName, [Info], ?DEFAULT_OPTIONS}, ?TIMEOUT);
         _ ->
-            gen_server:call(?SERVER, {'update', TableName, {K, V}}, ?TIMEOUT)
+            gen_server:call(?SERVER, {'update', TableName, Info}, ?TIMEOUT)
     end.
 
 %%获取配置
@@ -102,9 +102,11 @@ handle_call({'delete', TableName, Key}, _From, State) ->
     end,
     {reply, Reply, State, hibernate};
 %%修改
-handle_call({'update', TableName, {K, V}}, _From, State) ->
-    [OldV] = ets:lookup(TableName, K),
-    ets:insert(TableName, {K, V}),
+handle_call({'update', TableName, Info}, _From, State) ->
+    KeyPos = ets:info(TableName, keypos),
+    Key = element(KeyPos, Info),
+    [OldV] = ets:lookup(TableName, Key),
+    ets:insert(TableName, Info),
     {reply, {ok, OldV}, State, hibernate};
 %%批量修改
 handle_call({'batch_update', TableName, KVL}, _From, State) ->

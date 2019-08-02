@@ -139,7 +139,7 @@ init_cfg(Path) ->
     end,
     lists:foldl(F, [], AllCFGFile).
 %%配置文件更新
-do_refresh_config(#state{file_update_time = Ets,cfg_path = Path}) ->
+do_refresh_config(#state{file_update_time = Ets, cfg_path = Path}) ->
 %%拿到所有配置文件
     AllCFGFile = filelib:wildcard(Path ++ "/*.cfg"),
     F = fun(File, R) ->
@@ -210,7 +210,7 @@ handle_({'config', {TableName, KVList, Options}}, Reply) ->
     NReply;
 %%通讯协议
 handle_({Type, {Ref, MFAList, LogFun, TimeOut}}, Reply) when Type =:= 'tcp_protocol' orelse Type =:= 'http_protocol' ->
-    Type:set(Ref, MFAList, LogFun, TimeOut),
+    config_lib:set(Type, {Ref, MFAList, LogFun, TimeOut}),
     ProL = list_lib:get_value(Type, 1, Reply, []),
     NReply = lists:keystore(Type, 1, Reply, {Type, [Ref | ProL]}),
     NReply;
@@ -284,7 +284,7 @@ update_delete(NewCfgList, OldCfgList) ->
                 true ->
                     ok;
                 false ->
-                    Type:delete(Pro)
+                    config_lib:delete(Pro)
             end
         end,
         lists:foreach(ProF, list_lib:get_value(Type, 1, OldCfgList, []))
