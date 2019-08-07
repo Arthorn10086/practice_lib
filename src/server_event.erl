@@ -52,7 +52,7 @@ handle_call({inform, Src, Mark, Args, {M, F, A}, TimeOut}, _From, #state{run_lis
     MS = time_lib:now_millisecond(),
     {Pid, Ref} = spawn_monitor(fun() -> run(M, F, A, Src, Mark, Args) end),
     EndTime = MS + TimeOut,
-    NL = [{{Pid, Ref}, EndTime} | L],
+    NL = [{{Pid, Ref}, Mark, Args, {M, F, A}, EndTime} | L],
     {reply, ok, State#state{run_list = NL}};
 handle_call({'set', Ref, MFA, TimeInfo}, _From, #state{ets = Ets} = State) ->
     ets:insert(Ets, {Ref, MFA, TimeInfo}),
@@ -69,12 +69,7 @@ handle_cast(_Request, State) ->
 
 
 handle_info('handle_time_out', #state{run_list = L} = State) ->
-    NL = case L of
-        [] ->
-            [];
-        _ ->
-            handle_run_list(L)
-    end,
+    NL = handle_run_list(L),
     erlang:send_after(?INTERVAL, self(), 'handle_time_out'),
     {noreply, State#state{run_list = NL}};
 handle_info({'DOWN', Ref, process, Pid, Reason}, #state{run_list = L} = State) ->
@@ -82,8 +77,10 @@ handle_info({'DOWN', Ref, process, Pid, Reason}, #state{run_list = L} = State) -
     case Reason of
         'normal' ->
             ok;
+        'time_out'->
+            ok;
         _ ->
-            log4erl:log(info, "~p~n", [{Pid, Ref, Reason}])
+            lager:log(error, Pid, "~p~n", [{Ref, Reason}])
     end,
     {noreply, State#state{run_list = L1}};
 handle_info(_Info, State) ->
@@ -105,21 +102,24 @@ run(M, F, A, Src, Mark, Args) ->
         M:F(A, Src, Mark, Args),
         ok
     catch
-        _E1: E2 ->
+        E1: E2 ->
             Stack = erlang:get_stacktrace(),
-            log4erl:log(info, "~p~n", [{E2, {M, F, A}, Stack}]),
+            lager:log(error, self(), "~p~n", [{E1, E2, {M, F, A}, Stack}]),
             {error, {E2, {M, F, A}, Stack}}
     end.
-
+handle_run_list([]) ->
+    [];
 handle_run_list(L) ->
-    SortFun = fun({_, A}, {_, B}) -> A > B end,
+    SortFun = fun({_, _, _, _, A}, {_, _, _, _, B}) -> A > B end,
     L1 = lists:sort(SortFun, L),
     NowMS = time_lib:now_millisecond(),
     handle_run_list_(L1, NowMS).
-
-handle_run_list_([{_Key, TimeOut} | _T] = L, NowMS) when NowMS < TimeOut ->
+handle_run_list_([], _) ->
+    [];
+handle_run_list_([{_Key, _, _, _, TimeOut} | _T] = L, NowMS) when NowMS < TimeOut ->
     L;
-handle_run_list_([{Key, _TimeOut} | T], NowMS) ->
+handle_run_list_([{Key, Mark, Args, MFA, _TimeOut} | T], NowMS) ->
     {Pid, _Ref} = Key,
     erlang:exit(Pid, 'time_out'),
+    log_lib:error(Pid, [{Mark, xmerl_ucs:to_utf8(Args), MFA}]),
     handle_run_list_(T, NowMS).
