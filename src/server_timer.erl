@@ -55,7 +55,7 @@ delete(Ref) ->
 %%--------------------------------------------------------------------
 init([]) ->
     ets:new(?MODULE, [named_table, protected, set]),
-    {ok, #state{ets = ?MODULE, run_list = [], last_time = time_lib:now_second()}, ?INTERVAL}.
+    {ok, #state{ets = ?MODULE, run_list = [], last_time = time_lib:now_second()}, 0}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -99,11 +99,11 @@ handle_cast(_Request, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_info(timeout, #state{ets = Ets, run_list = RunL} = State) ->
+    erlang:send_after(?INTERVAL, self(), timeout),
     Now = time_lib:now_second(),
     NowM = time_lib:now_millisecond(),
     time_out_handle(RunL, NowM),
     {_, NRunL} = timer_run(Ets, RunL, NowM),
-    erlang:send_after(?INTERVAL, self(), timeout),
     {noreply, State#state{run_list = NRunL, last_time = Now}};
 handle_info({'DOWN', Ref, process, Pid, Reason}, #state{ets = Ets, run_list = L} = State) ->
     MS = time_lib:now_millisecond(),
@@ -111,20 +111,23 @@ handle_info({'DOWN', Ref, process, Pid, Reason}, #state{ets = Ets, run_list = L}
     case Reason of
         'normal' ->
             ok;
+        'time_out'->%%超时kill
+            ok;
         _ ->
-            log4erl:log('info', "~p~n", [{Pid, Ref, Reason}])
+            log_lib:error(Pid, [{Pid, Ref, Reason}])
     end,
-    {Pid, Ref, _, _} = Info,
-    case ets:lookup(Ets, Ref) of
+    {Pid, Mark, _, _} = Info,
+    case ets:lookup(Ets, Mark) of
         [] ->
             ok;
-        [{Ref, MFA, TimeInfo, _, _}] ->
+        [{Mark, MFA, TimeInfo, _, _}] ->
             {Interval, _} = TimeInfo,
-            ets:insert(Ets, {Ref, MFA, TimeInfo, MS + Interval, ?WAITING}),
+            ets:insert(Ets, {Mark, MFA, TimeInfo, MS + Interval, ?WAITING}),
             ok
     end,
     {noreply, State#state{run_list = NRunL}};
 handle_info(_Info, State) ->
+    log_lib:info(self(),[{_Info,111111111}]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -172,7 +175,7 @@ timer_run(Ets, RunL, NowM) ->
                                 M:F(A, Ref, MS)
                             catch
                                 E1: E2 ->
-                                    log4erl:log(info, "~p~n", [{E1, E2, erlang:get_stacktrace()}])
+                                    log_lib:error(self(), [{E1, E2, xmerl_ucs:to_utf8(erlang:get_stacktrace())}])
                             end
                         end),
                         ets:insert(Ets, {Ref, MFA, TimeInfo, NextTime, ?RUNING}),
@@ -209,10 +212,11 @@ do_foldl(F, Accu0, Key, T) ->
 time_out_handle(List, Time) ->
     SortFun = fun({_, _, _, A}, {_, _, _, B}) -> A > B end,
     L1 = lists:sort(SortFun, List),
-    list_lib:foreach(fun({Pid, _Ref, _MFA, OutTime}) ->
+    list_lib:foreach(fun(_,{Pid, _Ref, MFA, OutTime}) ->
         if
             OutTime =< Time ->
                 erlang:exit(Pid, 'time_out'),
+                log_lib:error(Pid, [{timeout, kill_pid, MFA, OutTime}]),
                 ok;
             true ->
                 {break, ok}
