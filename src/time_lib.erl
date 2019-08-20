@@ -5,7 +5,7 @@
 -author("yhw").
 
 %%%=======================EXPORT=======================
--export([now_second/0, now_millisecond/0]).
+-export([now_second/0, now_millisecond/0, get_zero_second/0]).
 
 %%%=======================INCLUDE======================
 
@@ -35,6 +35,11 @@ now_second() ->
     {M, S, _} = os:timestamp(),
     M * 1000000 + S.
 
+get_zero_second() ->
+    {TM, TS, MS} = os:timestamp(),
+    Now = TM * 1000000 + TS,
+    {_, {H, M, S}} = calendar:now_to_local_time({TM, TS, MS}),
+    Now - (H * 60 * 60 + M * 60 + S).
 
 %%%===================LOCAL FUNCTIONS==================
 %% ----------------------------------------------------

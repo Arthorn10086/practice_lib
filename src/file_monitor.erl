@@ -226,6 +226,12 @@ handle_({'server_timer', {Ref, MFA, TimeInfo}}, Reply) ->
     ProL = list_lib:get_value('server_timer', 1, Reply, []),
     NReply = lists:keystore('server_timer', 1, Reply, {'server_timer', [Ref | ProL]}),
     NReply;
+%%数据库服务
+handle_({'server_db', {Name, Options}}, Reply) ->
+    server_db:set(Name, Options),
+    ProL = list_lib:get_value('server_db', 1, Reply, []),
+    NReply = lists:keystore('server_db', 1, Reply, {'server_db', [Name | ProL]}),
+    NReply;
 handle_(_Data, Reply) ->
     Reply.
 
@@ -302,4 +308,4 @@ update_delete(NewCfgList, OldCfgList) ->
             end
         end,
         lists:foreach(ProF, list_lib:get_value(Type, 1, OldCfgList, []))
-    end, ['server_event', 'server_timer']).
+    end, ['server_event', 'server_timer', 'server_db']).

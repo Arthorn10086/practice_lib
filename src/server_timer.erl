@@ -67,7 +67,7 @@ init([]) ->
 handle_call({'set', Ref, MFA, TimeInfo}, _From, #state{ets = Ets} = State) ->
     case ets:lookup(Ets, Ref) of
         [] ->
-            ets:insert(Ets, {Ref, MFA, TimeInfo});
+            ets:insert(Ets, {Ref, MFA, TimeInfo, 0, ?WAITING});
         [{_, _, _, NextTime, Flag}] ->
             ets:insert(Ets, {Ref, MFA, TimeInfo, NextTime, Flag})
     end,
